@@ -1,0 +1,30 @@
+{
+  "name": "earnings-live-events",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": [
+    "packages/shared",
+    "packages/server",
+    "packages/client"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "concurrently -n server,client -c cyan,magenta \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:server": "npm run dev -w @earnings/server",
+    "dev:client": "npm run dev -w @earnings/client",
+    "build": "npm run build -w @earnings/shared && npm run build -w @earnings/server && npm run build -w @earnings/client",
+    "start": "npm run start -w @earnings/server",
+    "typecheck": "tsc -b packages/shared packages/server packages/client",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "concurrently": "^9.1.0",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
