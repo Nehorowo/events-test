@@ -45,10 +45,14 @@ export function createApp(deps: { broker: ChannelBroker; events: EventsService }
    * The snapshot endpoint. Deliberately stale by `SNAPSHOT_LAG_MS` — which is
    * exactly what the client's SSE buffer has to make up for.
    */
-  app.get('/events', (req, res) => {
+  app.get('/events', async (req, res) => {
     const symbols = parseSymbols(req.query.symbols);
+    if (config.snapshotDelayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, config.snapshotDelayMs));
+    }
     // A stale body is the contract; a *cached* stale body is not.
     res.setHeader('Cache-Control', 'no-store');
+    // Built *after* the delay, so `ageMs` describes the body the caller holds.
     res.json(events.getSnapshot(symbols));
   });
 

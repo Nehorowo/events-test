@@ -32,6 +32,17 @@ export interface ReconnectInfo {
   role: 'leader' | 'follower';
 }
 
+/** Per-message delivery metadata, passed alongside the payload. */
+export interface MessageMeta {
+  /**
+   * `true` when the message came out of the channel's replay buffer rather
+   * than over the wire in real time. Latency measurements must exclude these:
+   * a replayed message is as old as the replay window, which says nothing
+   * about the delivery path.
+   */
+  replayed: boolean;
+}
+
 /**
  * The one SSE subscription of the app.
  *
@@ -40,8 +51,8 @@ export interface ReconnectInfo {
  * callback identity — keep a reference to it.
  */
 export interface ILiveEventsClient {
-  subscribe(cb: (message: LiveEventsMessage) => void): void;
-  unsubscribe(cb: (message: LiveEventsMessage) => void): void;
+  subscribe(cb: (message: LiveEventsMessage, meta?: MessageMeta) => void): void;
+  unsubscribe(cb: (message: LiveEventsMessage, meta?: MessageMeta) => void): void;
   /** Returns an unsubscribe function, unlike `subscribe`. */
   onReconnect(cb: (info: ReconnectInfo) => void): () => void;
   readonly connected: boolean;

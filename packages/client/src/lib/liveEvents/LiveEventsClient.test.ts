@@ -220,6 +220,36 @@ describe('LiveEventsClient', () => {
     expect(followerTab.diagnostics.role).toBe('leader');
   });
 
+  it('flags buffered messages as replay and live ones as live', async () => {
+    const tab = makeClient();
+    const seen: { id: number; replayed: boolean | undefined }[] = [];
+    tab.subscribe((m, meta) => seen.push({ id: m.id, replayed: meta?.replayed }));
+    await flush();
+
+    const source = FakeEventSource.instances[0]!;
+    source.open();
+    // The channel announces two buffered messages, then streams live.
+    source.emit('hello', {
+      channel: 'live_events',
+      serverTime: new Date().toISOString(),
+      bufferWindowMs: 600_000,
+      replayed: 2,
+      lastEventId: null,
+      oldestId: 1,
+      newestId: 3,
+    });
+    source.emit('live_started', message(1), '1');
+    source.emit('live_started', message(2, 'MSFT'), '2');
+    source.emit('live_started', message(3, 'NVDA'), '3');
+    await flush();
+
+    expect(seen).toEqual([
+      { id: 1, replayed: true },
+      { id: 2, replayed: true },
+      { id: 3, replayed: false },
+    ]);
+  });
+
   it('reports a replay gap to consumers so they can refetch', async () => {
     const tab = makeClient();
     const infos: unknown[] = [];

@@ -35,7 +35,7 @@ interesting: the snapshot really is 10 minutes behind, the replay buffer really
 is full, and the reconciliation really happens on first paint.
 
 ```bash
-npm test             # 34 unit tests, no browser needed
+npm test             # 36 unit tests, no browser needed
 npm run typecheck
 npm run build
 ```
@@ -45,12 +45,24 @@ Useful knobs (all env vars, see `packages/server/src/config.ts`):
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `SNAPSHOT_LAG_MS` | `600000` | How stale `/events` is |
+| `SNAPSHOT_DELAY_MS` | `400` | Simulated latency of the snapshot API (see below) |
 | `REPLAY_WINDOW_MS` | `600000` | Channel retention (nchan's message buffer) |
 | `SIM_CYCLE_MS` | `240000` | One full earnings lifecycle in the simulator |
 | `SIM_HISTORY_MS` | `1800000` | History generated at boot |
 | `NCHAN_PUBLISH_URL` | — | Mirror messages into a real nginx+nchan |
 
 `?symbols=AAPL,MSFT` on the page narrows the watchlist.
+
+`SNAPSHOT_DELAY_MS` stands in for the database query and network hop a real
+snapshot API costs. Locally the snapshot would otherwise answer in under a
+millisecond — beating the SSE replay — and the buffer-onto-snapshot path this
+whole app is about would never run. With it, the reconciliation log shows what
+actually happens:
+
+```
+Snapshot (600s old, 39 events) + 147 buffered messages →
+  121 applied, 25 created, 1 already in snapshot, 0 orphan · buffer covers the snapshot
+```
 
 ---
 
@@ -104,6 +116,11 @@ triggers a snapshot refetch.
 **No rollback** — on a refetch, a per-event "newest `updatedAt` wins" merge keeps
 the held state where it is ahead of the (by construction older) snapshot.
 
+**Replay vs live** — `hello` announces how many messages the channel is about to
+replay, and the transport counts them down, so `MessageMeta.replayed` is exact.
+End-to-end latency is measured over live messages only: a replayed message is as
+old as the replay window and would describe nothing but that window.
+
 The fold lives in `packages/shared/src/apply.ts` and is used by **both** sides,
 so the client cannot disagree with the server about what a delta means.
 
@@ -113,8 +130,8 @@ so the client cannot disagree with the server about what a delta means.
 
 ```ts
 interface ILiveEventsClient {           // one SSE subscription, app-wide singleton
-  subscribe(cb: (m: LiveEventsMessage) => void): void;
-  unsubscribe(cb: (m: LiveEventsMessage) => void): void;
+  subscribe(cb: (m: LiveEventsMessage, meta?: MessageMeta) => void): void;
+  unsubscribe(cb: (m: LiveEventsMessage, meta?: MessageMeta) => void): void;
   onReconnect(cb: (info: ReconnectInfo) => void): () => void;
   readonly connected: boolean;
 }

@@ -4,6 +4,7 @@ import type {
   EarningsEventsSnapshot,
   ILiveEventsClient,
   LiveEventsMessage,
+  MessageMeta,
   ReconnectInfo,
 } from '@earnings/shared';
 import { EarningsEventsProvider } from './EarningsEventsProvider.js';
@@ -14,13 +15,15 @@ const at = (minutes: number): string => new Date(Date.UTC(2026, 0, 1, 12, minute
 /** Stub of the singleton, so the provider can be driven message by message. */
 class FakeClient implements ILiveEventsClient {
   connected = true;
-  private readonly subscribers = new Set<(message: LiveEventsMessage) => void>();
+  private readonly subscribers = new Set<
+    (message: LiveEventsMessage, meta?: MessageMeta) => void
+  >();
   private readonly reconnectSubscribers = new Set<(info: ReconnectInfo) => void>();
 
-  subscribe(cb: (message: LiveEventsMessage) => void): void {
+  subscribe(cb: (message: LiveEventsMessage, meta?: MessageMeta) => void): void {
     this.subscribers.add(cb);
   }
-  unsubscribe(cb: (message: LiveEventsMessage) => void): void {
+  unsubscribe(cb: (message: LiveEventsMessage, meta?: MessageMeta) => void): void {
     this.subscribers.delete(cb);
   }
   onReconnect(cb: (info: ReconnectInfo) => void): () => void {
@@ -28,8 +31,8 @@ class FakeClient implements ILiveEventsClient {
     return () => this.reconnectSubscribers.delete(cb);
   }
 
-  emit(message: LiveEventsMessage): void {
-    for (const cb of this.subscribers) cb(message);
+  emit(message: LiveEventsMessage, meta?: MessageMeta): void {
+    for (const cb of this.subscribers) cb(message, meta);
   }
   emitReconnect(info: ReconnectInfo): void {
     for (const cb of this.reconnectSubscribers) cb(info);
@@ -183,5 +186,19 @@ describe('EarningsEventsProvider', () => {
     expect(latency.replayedCount).toBe(1);
     expect(latency.lastMs).toBe(10_000);
     expect(latency.samples).toBe(1);
+  });
+
+  it('trusts the client\'s replay flag over the age heuristic', () => {
+    // Fresh by timestamp, but the channel served it from its buffer: a replay
+    // that happens to be seconds old must not enter the latency percentile.
+    client.emit(
+      { ...liveStarted(8, 19), tsSent: new Date(NOW - 2_000).toISOString() },
+      { replayed: true },
+    );
+
+    const latency = provider.getState().latency;
+    expect(latency.replayedCount).toBe(1);
+    expect(latency.samples).toBe(0);
+    expect(latency.lastMs).toBeNull();
   });
 });

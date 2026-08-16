@@ -21,6 +21,7 @@
 import {
   type ILiveEventsClient,
   type LiveEventsMessage,
+  type MessageMeta,
   type ReconnectInfo,
   type StreamGap,
   type StreamHello,
@@ -74,7 +75,9 @@ export class LiveEventsClient implements ILiveEventsClient {
   private readonly bus: CrossTabBus | null;
   private readonly election: LeaderElection | null;
 
-  private readonly messageSubscribers = new Set<(message: LiveEventsMessage) => void>();
+  private readonly messageSubscribers = new Set<
+    (message: LiveEventsMessage, meta?: MessageMeta) => void
+  >();
   private readonly reconnectSubscribers = new Set<(info: ReconnectInfo) => void>();
 
   private transport: SseTransport | null = null;
@@ -122,7 +125,7 @@ export class LiveEventsClient implements ILiveEventsClient {
     return this.role === 'leader' ? this.connectedValue : this.leaderConnected;
   }
 
-  subscribe(cb: (message: LiveEventsMessage) => void): void {
+  subscribe(cb: (message: LiveEventsMessage, meta?: MessageMeta) => void): void {
     this.messageSubscribers.add(cb);
 
     // A late subscriber gets the retained buffer, so every consumer starts from
@@ -137,12 +140,13 @@ export class LiveEventsClient implements ILiveEventsClient {
     if (backlog.length > 0) {
       queueMicrotask(() => {
         if (!this.messageSubscribers.has(cb)) return;
-        for (const message of backlog) cb(message);
+        // Anything already buffered is, by definition, not live traffic.
+        for (const message of backlog) cb(message, { replayed: true });
       });
     }
   }
 
-  unsubscribe(cb: (message: LiveEventsMessage) => void): void {
+  unsubscribe(cb: (message: LiveEventsMessage, meta?: MessageMeta) => void): void {
     this.messageSubscribers.delete(cb);
   }
 
@@ -221,7 +225,7 @@ export class LiveEventsClient implements ILiveEventsClient {
       lastEventId: cursor,
       createEventSource: this.options.createEventSource,
       handlers: {
-        onMessage: (message) => this.ingest(message, 'transport'),
+        onMessage: (message, replayed) => this.ingest(message, 'transport', replayed),
         onHello: (hello) => this.onHello(hello),
         onGap: (gap) => {
           this.pendingGap = gap;
@@ -285,7 +289,8 @@ export class LiveEventsClient implements ILiveEventsClient {
         // Followers take the leader's feed; the leader ignores its own echo
         // (BroadcastChannel does not deliver to the sender, but a second leader
         // during a handover is possible — the buffer dedupe absorbs it).
-        this.ingest(message.message, 'bus');
+        // The leader forwards only live traffic, so this is live for us too.
+        this.ingest(message.message, 'bus', false);
         break;
 
       case 'buffer_request':
@@ -309,8 +314,8 @@ export class LiveEventsClient implements ILiveEventsClient {
       case 'buffer_sync':
         if (message.to !== this.tabId || this.role === 'leader') return;
         // Everything the leader has seen so far, so this tab can reconcile its
-        // own snapshot fetch without a second connection.
-        for (const item of message.messages) this.ingest(item, 'bus');
+        // own snapshot fetch without a second connection. History, not live.
+        for (const item of message.messages) this.ingest(item, 'bus', true);
         break;
 
       case 'status':
@@ -331,13 +336,19 @@ export class LiveEventsClient implements ILiveEventsClient {
 
   // --- fan-out -----------------------------------------------------------
 
-  private ingest(message: LiveEventsMessage, origin: 'transport' | 'bus'): void {
+  private ingest(
+    message: LiveEventsMessage,
+    origin: 'transport' | 'bus',
+    replayed: boolean,
+  ): void {
     // The buffer is the dedupe gate: replays, cross-tab echoes and the
     // post-promotion overlap all collapse here, before any subscriber sees them.
     if (!this.buffer.add(message)) return;
 
-    if (origin === 'transport') this.bus?.post({ kind: 'live', message });
-    for (const subscriber of this.messageSubscribers) subscriber(message);
+    // Only live traffic is forwarded to other tabs; they get history through
+    // `buffer_sync`, which is explicitly marked as replay.
+    if (origin === 'transport' && !replayed) this.bus?.post({ kind: 'live', message });
+    for (const subscriber of this.messageSubscribers) subscriber(message, { replayed });
   }
 
   private emitReconnect(info: ReconnectInfo): void {

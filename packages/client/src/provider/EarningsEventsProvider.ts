@@ -32,6 +32,7 @@ import {
   type IEarningsEventsProvider,
   type ILiveEventsClient,
   type LiveEventsMessage,
+  type MessageMeta,
   type OutcomeCounts,
   type ReconnectInfo,
 } from '@earnings/shared';
@@ -82,8 +83,8 @@ const NOTABLE_LOG_LIMIT = 20;
 const LATENCY_WINDOW = 100;
 
 /**
- * A message older than this did not travel to us in real time — it came out of
- * the channel's replay buffer (on subscribe, or on resume after an outage).
+ * Fallback for clients that deliver no `MessageMeta`: a message this old cannot
+ * have travelled to us in real time, so it must have come from the buffer.
  */
 const REPLAY_THRESHOLD_MS = 30_000;
 
@@ -101,7 +102,8 @@ export class EarningsEventsProvider implements IEarningsEventsProvider {
   private logSeq = 0;
   private state: ProviderState;
   private offReconnect: (() => void) | null = null;
-  private readonly onMessage = (message: LiveEventsMessage): void => this.ingest(message);
+  private readonly onMessage = (message: LiveEventsMessage, meta?: MessageMeta): void =>
+    this.ingest(message, meta);
 
   constructor(options: ProviderOptions) {
     this.client = options.client;
@@ -228,7 +230,7 @@ export class EarningsEventsProvider implements IEarningsEventsProvider {
 
   // --- internals ---------------------------------------------------------
 
-  private ingest(message: LiveEventsMessage): void {
+  private ingest(message: LiveEventsMessage, meta?: MessageMeta): void {
     // Client-side filtering: the channel is unfiltered, every payload carries
     // `symbol`/`companyId`, and this tab decides what concerns it. O(1).
     if (!this.watchlist.has(message.symbol)) {
@@ -241,11 +243,11 @@ export class EarningsEventsProvider implements IEarningsEventsProvider {
     }
 
     // End-to-end latency, measured from the server's `tsSent`. Replayed
-    // messages are minutes old by definition — folding them into the percentile
-    // would describe the replay window, not the delivery path — so anything
-    // beyond the freshness threshold is counted as replay instead.
+    // messages say nothing about the delivery path — they are as old as the
+    // replay window — so they are counted separately. The client tells us which
+    // is which; the age check is only a fallback for a client that does not.
     const latency = latencyMs(message, this.now());
-    const replayed = latency > REPLAY_THRESHOLD_MS;
+    const replayed = meta ? meta.replayed : latency > REPLAY_THRESHOLD_MS;
     if (!replayed) {
       this.latencies.push(latency);
       if (this.latencies.length > LATENCY_WINDOW) this.latencies.shift();

@@ -31,7 +31,8 @@ export interface EventSourceLike {
 }
 
 export interface SseTransportHandlers {
-  onMessage(message: LiveEventsMessage): void;
+  /** `replayed` marks messages served from the channel's buffer, not the wire. */
+  onMessage(message: LiveEventsMessage, replayed: boolean): void;
   onHello(hello: StreamHello): void;
   onGap(gap: StreamGap): void;
   onStatus(status: TransportStatus, detail: { attempt: number; nextRetryMs?: number }): void;
@@ -65,6 +66,12 @@ export class SseTransport {
 
   private lastEventIdValue: string | null;
   private statusValue: TransportStatus = 'idle';
+  /**
+   * How many of the next messages are replay. `hello` announces the count, and
+   * nchan sends exactly that many buffered messages before live traffic starts,
+   * so counting down is exact — no timestamp heuristics.
+   */
+  private replayRemaining = 0;
 
   constructor(options: SseTransportOptions) {
     this.url = options.url;
@@ -146,7 +153,9 @@ export class SseTransport {
 
     source.addEventListener(SSE_EVENT_NAMES.hello, (event) => {
       const hello = this.parse<StreamHello>(event);
-      if (hello) this.handlers.onHello(hello);
+      if (!hello) return;
+      this.replayRemaining = hello.replayed;
+      this.handlers.onHello(hello);
     });
 
     source.addEventListener(SSE_EVENT_NAMES.gap, (event) => {
@@ -163,7 +172,10 @@ export class SseTransport {
         // Advance the cursor only on real messages, so a resume picks up
         // exactly where the last delivered message left off.
         this.lastEventIdValue = event.lastEventId || String(message.id) || this.lastEventIdValue;
-        this.handlers.onMessage(message);
+
+        const replayed = this.replayRemaining > 0;
+        if (replayed) this.replayRemaining -= 1;
+        this.handlers.onMessage(message, replayed);
       });
     }
   }

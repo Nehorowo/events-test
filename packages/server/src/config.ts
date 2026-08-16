@@ -3,6 +3,11 @@ const num = (value: string | undefined, fallback: number): number => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
 
+const numOrZero = (value: string | undefined, fallback: number): number => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+};
+
 export const config = {
   port: num(process.env.PORT, 4000),
 
@@ -11,6 +16,15 @@ export const config = {
    * replica — it is the entire reason the client has to reconcile.
    */
   snapshotLagMs: num(process.env.SNAPSHOT_LAG_MS, 10 * 60_000),
+
+  /**
+   * Artificial latency on `GET /events`, standing in for the database query and
+   * network hop a real snapshot API costs. Without it the snapshot answers in
+   * under a millisecond — faster than the SSE replay — and the buffer-onto-
+   * snapshot path the client is built around never actually runs locally.
+   * Set `SNAPSHOT_DELAY_MS=0` to remove it.
+   */
+  snapshotDelayMs: numOrZero(process.env.SNAPSHOT_DELAY_MS, 400),
 
   /** Replay window the channel retains, mirroring `nchan_message_timeout`. */
   replayWindowMs: num(process.env.REPLAY_WINDOW_MS, 10 * 60_000),
