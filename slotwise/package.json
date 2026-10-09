@@ -1,0 +1,18 @@
+{
+  "name": "slotwise",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": ["api", "web"],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "dev": "concurrently -n api,worker,web -c cyan,yellow,magenta \"npm run dev -w @slotwise/api\" \"npm run dev:worker -w @slotwise/api\" \"npm run dev -w @slotwise/web\"",
+    "build": "npm run build -w @slotwise/web && npm run build -w @slotwise/api",
+    "typecheck": "npm run typecheck -w @slotwise/api && npm run typecheck -w @slotwise/web",
+    "test": "npm test -w @slotwise/api"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "typescript": "~5.9.2"
+  }
+}

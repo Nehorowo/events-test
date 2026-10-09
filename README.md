@@ -1,3 +1,5 @@
+> This repository also contains **[Slotwise](slotwise/README.md)**, a multi-tenant appointment booking app with Docker Compose (`slotwise/`).
+
 # Earnings live events — snapshot + SSE reconciliation
 
 A full-stack TypeScript demo of one specific problem: a page loads a **snapshot

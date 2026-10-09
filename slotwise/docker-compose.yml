@@ -1,0 +1,104 @@
+# Slotwise: app + worker + Postgres, with a local mail catcher and nightly backups.
+#   cp .env.example .env    # then set APP_SECRET
+#   docker compose up -d --build
+#   open http://localhost:8080   (mail: http://localhost:8025)
+
+name: slotwise
+
+x-app-env: &app-env
+  DATABASE_URL: postgres://slotwise:${POSTGRES_PASSWORD:-slotwise}@db:5432/slotwise
+  APP_URL: ${APP_URL:-http://localhost:8080}
+  APP_SECRET: ${APP_SECRET:?Set APP_SECRET in .env (generate one with openssl rand -hex 32)}
+  EMAIL_FROM: ${EMAIL_FROM:-Slotwise <bookings@slotwise.local>}
+  RESEND_API_KEY: ${RESEND_API_KEY:-}
+  SMTP_URL: ${SMTP_URL:-smtp://mailpit:1025}
+  GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+  GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+  STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+  STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+  STRIPE_PRICE_MONTHLY: ${STRIPE_PRICE_MONTHLY:-}
+  STRIPE_PRICE_YEARLY: ${STRIPE_PRICE_YEARLY:-}
+  VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+  VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+  VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:support@slotwise.local}
+  UMAMI_SCRIPT_URL: ${UMAMI_SCRIPT_URL:-}
+  UMAMI_WEBSITE_ID: ${UMAMI_WEBSITE_ID:-}
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: slotwise
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-slotwise}
+      POSTGRES_DB: slotwise
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U slotwise -d slotwise"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  app:
+    build: .
+    image: slotwise:latest
+    restart: unless-stopped
+    environment:
+      <<: *app-env
+    ports:
+      - "${APP_PORT:-8080}:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  worker:
+    image: slotwise:latest
+    restart: unless-stopped
+    command: ["node", "--enable-source-maps", "api/dist/worker.js"]
+    environment:
+      <<: *app-env
+      # The app applies migrations; the worker starts once the app is healthy.
+      RUN_MIGRATIONS: "false"
+    healthcheck:
+      disable: true
+    depends_on:
+      app:
+        condition: service_healthy
+
+  # Catches all outgoing mail locally. Not used once RESEND_API_KEY is set.
+  mailpit:
+    image: axllent/mailpit:v1.27
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8025:8025"
+
+  # Nightly pg_dump, 14 days kept. Ship ./backups off-site (e.g. rclone to
+  # object storage) and test a restore before launch.
+  backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-slotwise}
+      BACKUP_HOUR: ${BACKUP_HOUR:-3}
+    volumes:
+      - ./backups:/backups
+      - ./ops/backup.sh:/backup.sh:ro
+    entrypoint: ["/bin/sh", "/backup.sh"]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Optional uptime monitoring: docker compose --profile ops up -d
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    profiles: ["ops"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3001:3001"
+    volumes:
+      - kuma:/app/data
+
+volumes:
+  pgdata:
+  kuma:
